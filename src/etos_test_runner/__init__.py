@@ -34,10 +34,6 @@ DEV = os.getenv("DEV", "false").lower() == "true"
 ENVIRONMENT = "development" if DEV else "production"
 setup_logging("ETOS Test Runner", VERSION, ENVIRONMENT)
 
-# ETR will print the entire environment just before executing.
-# Hide the password.
-os.environ["ETOS_RABBITMQ_PASSWORD"] = "*********"
-
 # JSONTas would print all passwords as they are decrypted,
 # which is not safe, so we disable propagation on the loggers.
 # Propagation needs to be set to 0 instead of disabling the

@@ -25,6 +25,7 @@ from json.decoder import JSONDecodeError
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from requests.exceptions import HTTPError
 from urllib3.exceptions import MaxRetryError, NewConnectionError
+from etos_test_runner.lib.events import EventPublisher
 
 
 class LogArea:
@@ -39,6 +40,8 @@ class LogArea:
         :type etos: :obj:`etos_lib.etos.Etos`
         """
         self.etos = etos
+        self.event_publisher = EventPublisher(etos)
+        self.identifier = self.etos.config.get("suite_id")
         self.suite_name = self.etos.config.get("test_config").get("name").replace(" ", "-")
         self.log_area = self.etos.config.get("test_config").get("log_area")
         self.logs = []
@@ -137,6 +140,9 @@ class LogArea:
                 self.etos.config.get("main_suite_id"),
                 self.etos.config.get("sub_suite_id"),
             )
+            event = {"event": "report", "data": {"url": log["uri"], "name": log["name"]}}
+            self.logger.info("Sending event:      %r", event)
+            self.event_publisher.publish(event)
             self.logs.append(log)
             log["file"].unlink()
 
@@ -203,6 +209,9 @@ class LogArea:
                 self.etos.config.get("main_suite_id"),
                 self.etos.config.get("sub_suite_id"),
             )
+            event = {"event": "artifact", "data": {"url": artifact["uri"], "name": artifact["name"], "directory": self.suite_name}}
+            self.logger.info("Sending event:      %r", event)
+            self.event_publisher.publish(event)
             self.artifacts.append(artifact)
             artifact["file"].unlink()
 

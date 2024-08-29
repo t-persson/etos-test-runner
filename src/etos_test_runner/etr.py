@@ -73,9 +73,11 @@ class ETR:
             )
 
         self.etos.config.rabbitmq_publisher_from_environment()
+        self.etos.config.set("etos_rabbitmq_password", os.environ.get("ETOS_RABBITMQ_PASSWORD"))
         # ETR will print the entire environment just before executing.
         # Hide the password.
         os.environ["RABBITMQ_PASSWORD"] = "*********"
+        os.environ["ETOS_RABBITMQ_PASSWORD"] = "*********"
 
         self.etos.start_publisher()
         self.environment_id = os.getenv("ENVIRONMENT_ID")
