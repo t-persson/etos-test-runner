@@ -16,6 +16,7 @@
 """ETR log area handler."""
 import logging
 import traceback
+import hashlib
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -133,14 +134,21 @@ class LogArea:
         :type logs: list
         """
         for log in logs:
-            log["uri"] = self.__upload(
+            log["uri"], log["checksums"] = self.__upload(
                 self.etos.config.get("context"),
                 log["file"],
                 log["name"],
                 self.etos.config.get("main_suite_id"),
                 self.etos.config.get("sub_suite_id"),
             )
-            event = {"event": "report", "data": {"url": log["uri"], "name": log["name"]}}
+            event = {
+                "event": "report",
+                "data": {
+                    "url": log["uri"],
+                    "name": log["name"],
+                    "checksums": log["checksums"],
+                },
+            }
             self.logger.info("Sending event:      %r", event)
             self.event_publisher.publish(event)
             self.logs.append(log)
@@ -202,14 +210,22 @@ class LogArea:
         artifact_created = self._artifact_created(artifacts)
 
         for artifact in artifacts:
-            artifact["uri"] = self.__upload(
+            artifact["uri"], artifact["checksums"] = self.__upload(
                 self.etos.config.get("context"),
                 artifact["file"],
                 artifact["name"],
                 self.etos.config.get("main_suite_id"),
                 self.etos.config.get("sub_suite_id"),
             )
-            event = {"event": "artifact", "data": {"url": artifact["uri"], "name": artifact["name"], "directory": self.suite_name}}
+            event = {
+                "event": "artifact",
+                "data": {
+                    "url": artifact["uri"],
+                    "name": artifact["name"],
+                    "directory": self.suite_name,
+                    "checksums": artifact["checksums"],
+                },
+            }
             self.logger.info("Sending event:      %r", event)
             self.event_publisher.publish(event)
             self.artifacts.append(artifact)
@@ -262,7 +278,10 @@ class LogArea:
         if upload.get("auth"):
             upload["auth"] = self.__auth(**upload["auth"])
 
+        checksums = {}
         with open(log, "rb") as log_file:
+            checksums["md5"] = hashlib.md5(log_file.read()).hexdigest()
+            log_file.seek(0)
             for _ in range(3):
                 request_generator = self.__retry_upload(log_file=log_file, **upload)
                 try:
@@ -273,13 +292,14 @@ class LogArea:
                         self.logger.info("Uploaded log %r.", log)
                         self.logger.info("Upload URI          %r", upload["url"])
                         self.logger.info("Data:               %r", data)
+                        self.logger.info("Checksum(md5):      %r", checksums["md5"])
                         break
                     break
                 except:  # noqa pylint:disable=bare-except
                     self.logger.error("%r", traceback.format_exc())
                     self.logger.error("Failed to upload log!")
                     self.logger.error("Attempted upload of %r", log)
-        return upload["url"]
+        return upload["url"], checksums
 
     def __retry_upload(
         self, verb, url, log_file, timeout=None, as_json=True, **requests_kwargs
