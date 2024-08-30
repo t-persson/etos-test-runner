@@ -281,7 +281,7 @@ class LogArea:
         checksums = {}
         with open(log, "rb") as log_file:
             content = log_file.read()
-            checksums["md5"] = hashlib.md5(content).hexdigest()
+            checksums["SHA-256"] = hashlib.sha256(content).hexdigest()
             for _ in range(3):
                 request_generator = self.__retry_upload(file_contents=content, **upload)
                 try:
@@ -292,7 +292,7 @@ class LogArea:
                         self.logger.info("Uploaded log %r.", log)
                         self.logger.info("Upload URI          %r", upload["url"])
                         self.logger.info("Data:               %r", data)
-                        self.logger.info("Checksum(md5):      %r", checksums["md5"])
+                        self.logger.info("Checksum(sha256):   %r", checksums["SHA-256"])
                         break
                     break
                 except:  # noqa pylint:disable=bare-except
