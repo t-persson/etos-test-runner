@@ -1,4 +1,4 @@
-# Copyright 2020-2021 Axis Communications AB.
+# Copyright Axis Communications AB.
 #
 # For a full list of individual contributors, please see the commit history.
 #
@@ -280,10 +280,10 @@ class LogArea:
 
         checksums = {}
         with open(log, "rb") as log_file:
-            checksums["md5"] = hashlib.md5(log_file.read()).hexdigest()
-            log_file.seek(0)
+            content = log_file.read()
+            checksums["md5"] = hashlib.md5(content).hexdigest()
             for _ in range(3):
-                request_generator = self.__retry_upload(log_file=log_file, **upload)
+                request_generator = self.__retry_upload(file_contents=content, **upload)
                 try:
                     for response in request_generator:
                         self.logger.debug("%r", response)
@@ -302,7 +302,7 @@ class LogArea:
         return upload["url"], checksums
 
     def __retry_upload(
-        self, verb, url, log_file, timeout=None, as_json=True, **requests_kwargs
+        self, verb, url, file_contents, timeout=None, as_json=True, **requests_kwargs
     ):  # pylint:disable=too-many-arguments
         """Attempt to connect to url for x time.
 
@@ -311,8 +311,8 @@ class LogArea:
         :type verb: str
         :param url: URL to retry upload request
         :type url: str
-        :param log_file: Opened log file to upload.
-        :type log_file: file
+        :param file_contents: File contents to upload
+        :type file_contents: str
         :param timeout: How long, in seconds, to retry request.
         :type timeout: int or None
         :param as_json: Whether or not to return json instead of response.
@@ -331,11 +331,8 @@ class LogArea:
             iteration += 1
             self.logger.debug("Iteration: %d", iteration)
             try:
-                # Seek back to the start of the file so that the uploaded file
-                # is not 0 bytes in size.
-                log_file.seek(0)
                 request = getattr(self.etos.http, verb.lower())
-                response = request(url, data=log_file, **requests_kwargs)
+                response = request(url, data=file_contents, **requests_kwargs)
                 if as_json:
                     yield response.json()
                 else:
