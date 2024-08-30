@@ -56,7 +56,7 @@ class EventPublisher:
             return
         if self.publisher is None:
             return
-        if not self.publisher.started:
+        if not self.publisher.running:
             self.publisher.start()
         routing_key = f"{self.identifier}.event.{event.get('event')}"
         self.publisher.send_event(event, routing_key=routing_key)
