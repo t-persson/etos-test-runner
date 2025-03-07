@@ -15,6 +15,7 @@
 # limitations under the License.
 # -*- coding: utf-8 -*-
 """ETOS internal message bus module."""
+
 import os
 from etos_lib import ETOS
 from etos_lib.logging.log_publisher import RabbitMQLogPublisher
@@ -46,17 +47,25 @@ class EventPublisher:
     def close(self):
         """Close the RabbitMQ publisher if it is started."""
         if self.publisher is not None and self.publisher.is_alive():
+            current = len(self.publisher._deliveries)
+            print("Remaining events to send        : %d", current)
             self.publisher.wait_for_unpublished_events()
             self.publisher.close()
             self.publisher.wait_close()
 
     def publish(self, event: dict):
         """Publish an event to the ETOS internal message bus."""
+        print(f"Disabled: {self.disabled}")
         if self.disabled:
             return
+        print(f"Publisher: {self.publisher}")
         if self.publisher is None:
             return
+        print(f"Running: {self.publisher.running}")
         if not self.publisher.running:
             self.publisher.start()
+        print(f"Running: {self.publisher.running}")
         routing_key = f"{self.identifier}.event.{event.get('event')}"
+        print(f"Publish: {event} - {routing_key}")
         self.publisher.send_event(event, routing_key=routing_key)
+        print("Thank you")

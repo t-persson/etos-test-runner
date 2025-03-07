@@ -16,6 +16,7 @@
 # limitations under the License.
 # -*- coding: utf-8 -*-
 """ETOS test runner module."""
+
 import sys
 import logging
 import os
@@ -164,7 +165,7 @@ class ETR:
 
         :return: Result of testrunner execution.
         """
-        _LOGGER.info("Starting ETR.")
+        _LOGGER.info("Initializing ETR.")
         sub_suite_url = self.get_sub_suite_url(self.environment_id)
         if sub_suite_url is None:
             raise TimeoutError(
@@ -173,6 +174,7 @@ class ETR:
         self.download_and_load(sub_suite_url)
         FORMAT_CONFIG.identifier = self.etos.config.get("suite_id")
         self.load_plugins()
+        _LOGGER.info("Starting ETR.", extra={"user_log": True})
         try:
             activity_name = self.etos.config.get("test_config").get("name")
             triggered = self.etos.events.send_activity_triggered(activity_name)
@@ -184,7 +186,7 @@ class ETR:
             )
             raise
         self.etos.events.send_activity_finished(triggered, {"conclusion": "SUCCESSFUL"})
-        _LOGGER.info("ETR finished.")
+        _LOGGER.info("ETR finished.", extra={"user_log": True})
         return result
 
 
