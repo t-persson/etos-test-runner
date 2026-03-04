@@ -14,7 +14,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License"
 ]
 dependencies = [
-    "etos_lib==5.2.0",
+    "etos_lib==5.2.1",
     "cryptography>=42.0.4,<43.0.0",
     "packageurl-python==0.9.1",
     "jsontas>=1.4.1,<2.0.0",

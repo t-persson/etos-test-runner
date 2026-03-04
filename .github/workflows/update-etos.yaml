@@ -1,0 +1,61 @@
+name: Update ETOS defaults
+
+on:
+  workflow_call:
+    inputs:
+      test-runner-version:
+        description: 'ETOS test runner version'
+        required: true
+        type: string
+      test-runner-release-body:
+        description: 'The release body that triggered this workflow'
+        required: true
+        type: string
+
+env:
+  REPOSITORY_OWNER: eiffel-community
+  ETOS_REPOSITORY: etos
+  ETOS_TEST_RUNNER_REPOSITORY: etos-test-runner
+
+jobs:
+  update-etos-defaults:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Generate a token
+      id: generate-token
+      uses: actions/create-github-app-token@v2
+      with:
+        owner: ${{ env.REPOSITORY_OWNER }}
+        repositories: ${{ env.ETOS_REPOSITORY }}
+        app-id: ${{ vars.ETOS_PR_APP_ID }}
+        private-key: ${{ secrets.ETOS_PR_APP_PRIVATE_KEY }}
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.REPOSITORY_OWNER }}/${{ env.ETOS_REPOSITORY }}
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: Update manifests
+      uses: fjogeleit/yaml-update-action@main
+      with:
+        commitChange: false
+        token: ${{ steps.generate-token.outputs.token }}
+        changes: |
+          {
+            "defaults/test_runner.yaml": {
+              ".version": "${{ inputs.test-runner-version }}"
+            }
+          }
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v8
+      with:
+        token: ${{ steps.generate-token.outputs.token }}
+        commit-message: Update to ETOS test runner ${{ inputs.test-runner-version }}
+        title: "Integrate \"${{ inputs.test-runner-version }}\""
+        body: "Automated update of ETOS version for Test Runner\n
+
+        Release: https://github.com/${{ env.REPOSITORY_OWNER }}/${{ env.ETOS_TEST_RUNNER_REPOSITORY }}/releases/tag/${{ inputs.test-runner-version }}\n
+
+        ${{ inputs.test-runner-release-body }}"
+        sign-commits: true
+        branch: "update-etos-test-runner-${{ github.run_id }}"
+        labels: automated-pr, dependencies, etos-test-runner
