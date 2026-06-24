@@ -48,9 +48,9 @@ class TestRunner:
         self.etos = etos
         self.iut = iut
         self.suite = self.etos.config.get("suite")
-        assert isinstance(
-            self.suite, EnvironmentSpec
-        ), "Suite config should be of type EnvironmentSpec"
+        assert isinstance(self.suite, EnvironmentSpec), (
+            "Suite config should be of type EnvironmentSpec"
+        )
         self.logger = logging.getLogger(f"ETR - {self.suite.name}")
 
         self.log_area = LogArea(self.etos)
@@ -133,13 +133,22 @@ class TestRunner:
                 executor.execute(workspace)
                 if not executor.result:
                     result = executor.result
-                self.logger.info(
-                    "Test '%s' finished. Result: %s. Test framework exit code: %d",
-                    executor.test_name,
-                    executor.result,
-                    executor.returncode,
-                    extra={"user_log": True},
-                )
+                if executor.result is False or executor.returncode != 0:
+                    self.logger.warning(
+                        "Test '%s' failed. Result: %s. Test framework exit code: %d",
+                        executor.test_name,
+                        executor.result,
+                        executor.returncode,
+                        extra={"user_log": True},
+                    )
+                else:
+                    self.logger.info(
+                        "Test '%s' finished. Result: %s. Test framework exit code: %d",
+                        executor.test_name,
+                        executor.result,
+                        executor.returncode,
+                        extra={"user_log": True},
+                    )
                 test_framework_exit_codes.append(executor.returncode)
         return result, test_framework_exit_codes
 
