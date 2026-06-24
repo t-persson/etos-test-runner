@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import time
+from datetime import timedelta
 from pprint import pprint
 from typing import Union
 
@@ -128,25 +129,29 @@ class TestRunner:
         test_framework_exit_codes = []
         for num, test in enumerate(self.suite.testExecutions):
             self.logger.info("Executing test %s/%s", num + 1, len(self.suite.testExecutions))
+            start = time.time()
             with Executor(test, self.iut, self.etos) as executor:
                 self.logger.info("Starting test '%s'", executor.test_name, extra={"user_log": True})
                 executor.execute(workspace)
+                end = time.time()
                 if not executor.result:
                     result = executor.result
                 if executor.result is False or executor.returncode != 0:
                     self.logger.warning(
-                        "Test '%s' failed. Result: %s. Test framework exit code: %d",
+                        "Test '%s' failed. Result: %s. Test framework exit code: %d (%s)",
                         executor.test_name,
                         executor.result,
                         executor.returncode,
+                        timedelta(seconds=end - start),
                         extra={"user_log": True},
                     )
                 else:
                     self.logger.info(
-                        "Test '%s' finished. Result: %s. Test framework exit code: %d",
+                        "Test '%s' finished. Result: %s. Test framework exit code: %d (%s)",
                         executor.test_name,
                         executor.result,
                         executor.returncode,
+                        timedelta(seconds=end - start),
                         extra={"user_log": True},
                     )
                 test_framework_exit_codes.append(executor.returncode)
