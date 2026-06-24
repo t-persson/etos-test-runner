@@ -71,6 +71,7 @@ class LogArea:
             - Prepend "log_info" if supplied by environment provider.
             - Reduce the size of the filename if it's too large.
             - Prepend a counter if filename already exists.
+            - Replace slashes in test name with underscores to avoid creating subdirectories.
 
         :param path: Path to a file to fix.
         :type path: :obj:`pathlib.Path`
@@ -82,7 +83,7 @@ class LogArea:
         directory, filename = path.parent, path.name
         if test_name is not None:
             self.logger.info("File collected as part of test case. Prepending %r", test_name)
-            filename = f"{test_name}_{filename}"
+            filename = f"{test_name.replace('/', '_')}_{filename}"
             self.logger.info("Result: %r", filename)
         if self.log_area.get("logs"):
             prepend = self.log_area.get("logs").get("prepend", "")
