@@ -47,6 +47,7 @@ from etos_test_runner.lib.custom_dataset import CustomDataset
 from etos_test_runner.lib.decrypt import Decrypt, decrypt
 from etos_test_runner.lib.events import EventPublisher
 from etos_test_runner.lib.iut import Iut
+from etos_test_runner.lib.metrics import ETRMetrics, ETRTerminated
 from etos_test_runner.lib.testrunner import TestRunner
 
 VERSION = version("etos_test_runner")
@@ -57,32 +58,45 @@ logging.getLogger("pika").setLevel(logging.WARNING)
 _LOGGER = logging.getLogger(__name__)
 
 
+def graceful_shutdown(*_) -> None:
+    """Catch sigterm."""
+    raise ETRTerminated("ETR has been terminated.")
+
+
 class ETR:
     """ETOS Test Runner."""
 
     context = None
 
-    def __init__(self) -> None:
-        """Initialize ETOS library and configure the internal message bus."""
-        self.etos = ETOS("ETOS Test Runner", os.getenv("HOSTNAME"), "ETOS Test Runner")
-        # The internal message bus (ETOS_RABBITMQ_*) is used already before the sub suite
-        # has been downloaded, e.g. for status events, so it is configured from the
-        # environment here. The password is decrypted on import in the package __init__.
-        self.etos.config.set("etos_rabbitmq_password", os.environ.get("ETOS_RABBITMQ_PASSWORD"))
-        self.etos.config.set("suite_id", os.getenv("SUITE_ID"))
-        # ETR will print the entire environment just before executing.
-        # Hide the password.
-        os.environ["ETOS_RABBITMQ_PASSWORD"] = "*********"
+    def __init__(self, metrics: Optional[ETRMetrics] = None) -> None:
+        """Initialize ETOS library and configure the internal message bus.
 
-        self.environment_id = os.getenv("ENVIRONMENT_ID")
-        self.environment_url = os.getenv("ENVIRONMENT_URL")
+        The startup measurement starts here and ends in `run_etr` when the Test Runner is
+        ready to execute, so that failures while constructing the runner are recorded too.
 
+        :param metrics: Metrics to record the Test Runner lifecycle with. No-op if None.
+        """
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
+        self.metrics = metrics if metrics is not None else ETRMetrics()
+        self.metrics.begin_startup()
+        try:
+            self.etos = ETOS("ETOS Test Runner", os.getenv("HOSTNAME"), "ETOS Test Runner")
+            # The internal message bus (ETOS_RABBITMQ_*) is used already before the sub suite
+            # has been downloaded, e.g. for status events, so it is configured from the
+            # environment here. The password is decrypted on import in the package __init__.
+            self.etos.config.set("etos_rabbitmq_password", os.environ.get("ETOS_RABBITMQ_PASSWORD"))
+            self.etos.config.set("suite_id", os.getenv("SUITE_ID"))
+            # ETR will print the entire environment just before executing.
+            # Hide the password.
+            os.environ["ETOS_RABBITMQ_PASSWORD"] = "*********"
 
-    @staticmethod
-    def graceful_shutdown(*_) -> None:
-        """Catch sigterm."""
-        raise Exception("ETR has been terminated.")  # pylint:disable=broad-exception-raised
+            self.environment_id = os.getenv("ENVIRONMENT_ID")
+            self.environment_url = os.getenv("ENVIRONMENT_URL")
+        except BaseException as exception:
+            self.metrics.end_startup(exception)
+            raise
+
+    graceful_shutdown = staticmethod(graceful_shutdown)
 
     @staticmethod
     def apply_sub_suite_environment(config: dict) -> None:
@@ -230,49 +244,52 @@ class ETR:
 
         :return: Result of testrunner execution.
         """
-        event_publisher = EventPublisher(self.etos)
-        _LOGGER.info("Publishing status event: ETOS Test Runner is starting.")
-        event_publisher.publish_v2(
-            Status(
-                data=ServiceStatus(
-                    name="test-runner",
-                    instance=self.environment_id,
-                    version=VERSION,
-                    status=ServiceHealth.OK,
-                    message="ETOS Test Runner is starting.",
-                )
-            ),
-        )
-        try:
-            _LOGGER.info("Starting ETR.")
-            sub_suite_url = self.environment_url
-            if sub_suite_url is None:
-                sub_suite_url = self.get_sub_suite_url(self.environment_id)
-                if sub_suite_url is None:
-                    raise TimeoutError(
-                        f"Could not get sub suite environment event with id {self.environment_id!r}"
-                    )
-            suite = self.download_and_load(sub_suite_url)
-            self.configure_eiffel_publisher()
-            FORMAT_CONFIG.identifier = self.etos.config.get("suite_id")
-            self.load_plugins()
-            iut = Iut(suite.iut)
-            test_runner = TestRunner(iut, self.etos)
-        except Exception as exception:  # pylint:disable=broad-except
-            _LOGGER.exception("ETR failed to start.")
-            _LOGGER.info("Publishing status event: ETOS Test Runner failed to start.")
+        # Startup ends when the Test Runner is ready to execute the test suite.
+        with self.metrics.measure_startup():
+            event_publisher = EventPublisher(self.etos)
+            _LOGGER.info("Publishing status event: ETOS Test Runner is starting.")
             event_publisher.publish_v2(
                 Status(
                     data=ServiceStatus(
                         name="test-runner",
                         instance=self.environment_id,
                         version=VERSION,
-                        status=ServiceHealth.ERROR,
-                        message=f"ETOS Test Runner failed to download sub suite: {exception}",
+                        status=ServiceHealth.OK,
+                        message="ETOS Test Runner is starting.",
                     )
                 ),
             )
-            raise
+            try:
+                _LOGGER.info("Starting ETR.")
+                sub_suite_url = self.environment_url
+                if sub_suite_url is None:
+                    sub_suite_url = self.get_sub_suite_url(self.environment_id)
+                    if sub_suite_url is None:
+                        raise TimeoutError(
+                            "Could not get sub suite environment event with id "
+                            f"{self.environment_id!r}"
+                        )
+                suite = self.download_and_load(sub_suite_url)
+                self.configure_eiffel_publisher()
+                FORMAT_CONFIG.identifier = self.etos.config.get("suite_id")
+                self.load_plugins()
+                iut = Iut(suite.iut)
+                test_runner = TestRunner(iut, self.etos, metrics=self.metrics)
+            except Exception as exception:  # pylint:disable=broad-except
+                _LOGGER.exception("ETR failed to start.")
+                _LOGGER.info("Publishing status event: ETOS Test Runner failed to start.")
+                event_publisher.publish_v2(
+                    Status(
+                        data=ServiceStatus(
+                            name="test-runner",
+                            instance=self.environment_id,
+                            version=VERSION,
+                            status=ServiceHealth.ERROR,
+                            message=f"ETOS Test Runner failed to download sub suite: {exception}",
+                        )
+                    ),
+                )
+                raise
         # test_runner.execute() will publish TestSuiteStarted and TestSuiteFinished events to manage
         # if there are any failures, no need for status events after this point.
         result = test_runner.execute()
@@ -282,13 +299,23 @@ class ETR:
 
 def main() -> None:
     """Start ETR."""
-    etr = ETR()
-    result = etr.run_etr()
-    if isinstance(result, dict):
-        pprint(result)
-    _LOGGER.info("Done. Exiting")
-    _LOGGER.info(result)
-    sys.exit(result)
+    # Install the SIGTERM handler before any potentially blocking initialization so that
+    # a termination always unwinds through the metrics shutdown below.
+    signal.signal(signal.SIGTERM, graceful_shutdown)
+    metrics = ETRMetrics()
+    try:
+        metrics = ETRMetrics.from_environment()
+        etr = ETR(metrics)
+        result = etr.run_etr()
+        if isinstance(result, dict):
+            pprint(result)
+        _LOGGER.info("Done. Exiting")
+        _LOGGER.info(result)
+        sys.exit(result)
+    finally:
+        # Export the final metric values on every exit path, including failures,
+        # timeouts and SIGTERM, since this process is short lived.
+        metrics.shutdown()
 
 
 def run():

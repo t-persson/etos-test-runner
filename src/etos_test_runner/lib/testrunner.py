@@ -20,7 +20,7 @@ import logging
 import os
 import time
 from pprint import pprint
-from typing import Union
+from typing import Optional, Union
 
 from eiffellib.events import EiffelTestSuiteStartedEvent
 from etos_lib.kubernetes.schemas.v1beta1.environment import EnvironmentSpec
@@ -28,6 +28,7 @@ from etos_lib.kubernetes.schemas.v1beta1.environment import EnvironmentSpec
 from etos_test_runner.lib.executor import Executor
 from etos_test_runner.lib.iut_monitoring import IutMonitoring
 from etos_test_runner.lib.log_area import LogArea
+from etos_test_runner.lib.metrics import UNCONFIRMED, ETRMetrics, outcome_from_exception
 from etos_test_runner.lib.verdict import CustomVerdictMatcher
 from etos_test_runner.lib.workspace import Workspace
 
@@ -37,15 +38,18 @@ class TestRunner:
 
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, iut, etos):
+    def __init__(self, iut, etos, metrics: Optional[ETRMetrics] = None):
         """Initialize.
 
         :param iut: IUT to execute tests on.
         :type iut: :obj:`etr.lib.iut.Iut`
         :param etos: ETOS library
         :type etos: :obj:`etos_lib.etos.ETOS`
+        :param metrics: Metrics to record the execution with. No-op if None.
+        :type metrics: :obj:`etos_test_runner.lib.metrics.ETRMetrics`
         """
         self.etos = etos
+        self.metrics = metrics if metrics is not None else ETRMetrics()
         self.iut = iut
         self.suite = self.etos.config.get("suite")
         assert isinstance(
@@ -337,13 +341,38 @@ class TestRunner:
             previous = current
             time.sleep(1)
 
+    def _record_result_publication(self, outcome: Optional[str], started: float) -> None:
+        """Record the terminal result publication outcome.
+
+        :param outcome: Publication outcome. 'success' if None.
+        :param started: Monotonic time when the terminal result publication started.
+        """
+        self.metrics.record_result_publication(
+            outcome or outcome_from_exception(None), time.monotonic() - started
+        )
+
+    def _publish_result(self, publish, started: float):
+        """Call a terminal result publication step, recording its outcome if it raises.
+
+        :param publish: Callable sending or awaiting delivery of the terminal result.
+        :param started: Monotonic time when the terminal result publication started.
+        :return: The return value of `publish`.
+        """
+        try:
+            return publish()
+        except BaseException as exception:
+            self._record_result_publication(outcome_from_exception(exception), started)
+            raise
+
     def execute(self):
         """Execute all tests in test suite.
 
         :return: Result of execution. Linux exit code.
         :rtype: int
         """
+        execution_started = time.monotonic()
         test_suite_started = None
+        completed = False
         try:
             self._test_suite_triggered(self.suite.name)
             self.logger.info("Send test suite started event.")
@@ -360,18 +389,24 @@ class TestRunner:
 
             with Workspace(self.log_area) as workspace:
                 self._run_and_finalize(workspace)
+            completed = True
         finally:
+            publication_started = None
             if test_suite_started is None:
                 self.logger.warning(
                     "Test suite did not start successfully. "
                     "Sending test suite started event in order to finish properly.",
                 )
-                test_suite_started = self.test_suite_started()
                 self._outcome = {
                     "verdict": "INCONCLUSIVE",
                     "conclusion": "FAILED",
                     "description": "Test suite did not start successfully.",
                 }
+                self.metrics.record_execution(self._outcome, time.monotonic() - execution_started)
+                publication_started = time.monotonic()
+                test_suite_started = self._publish_result(
+                    self.test_suite_started, publication_started
+                )
             published_reports = self.etos.config.get("published_report_count") or 0
             published_artifacts = self.etos.config.get("published_artifact_count") or 0
             self.logger.info(
@@ -386,15 +421,25 @@ class TestRunner:
                 self.logger.info("Figure out test outcome.")
                 self._outcome = self.outcome(self._result, False, None, [])
                 pprint(self._outcome)
+            if publication_started is None:
+                self.metrics.record_execution(self._outcome, time.monotonic() - execution_started)
+                publication_started = time.monotonic()
             self.logger.info("Send test suite finished event.")
-            test_suite_finished = self.etos.events.send_test_suite_finished(
-                test_suite_started,
-                links={"CONTEXT": self.etos.config.get("context")},
-                outcome=self._outcome,
-                persistentLogs=self.log_area.persistent_logs,
+            test_suite_finished = self._publish_result(
+                lambda: self.etos.events.send_test_suite_finished(
+                    test_suite_started,
+                    links={"CONTEXT": self.etos.config.get("context")},
+                    outcome=self._outcome,
+                    persistentLogs=self.log_area.persistent_logs,
+                ),
+                publication_started,
             )
             self.logger.info(test_suite_finished.pretty)
+            if not completed:
+                # The exception propagates without waiting for the events to be delivered.
+                self._record_result_publication(UNCONFIRMED, publication_started)
 
-        self.wait_for_events()
+        self._publish_result(self.wait_for_events, publication_started)
+        self._record_result_publication(None, publication_started)
         self.logger.info("Tests finished executing.")
         return 0 if self._result else self._outcome
